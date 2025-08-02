@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import GUI from 'lil-gui';
 import vertexShader from './bg_vertex.glsl?raw';
 import fragmentShader from './bg_fragment.glsl?raw';
-import tileImage from './my_tile.png';
+import tileImage from '/Tiles/bg4.png';
 
 //
 // Renderer
@@ -33,13 +33,13 @@ const uniforms = {
     tTile: { value: texture },
     resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
     uTileScale: { value: 20.0 },
-    uThreshold: { value: 0.0 },
-    uSharpness: { value: 0.03 },
-    uNoiseScale: { value: .15 },
-    uNoiseStrength: { value: 1.0 },   // Strong noise influence
+    uThreshold: { value: 1.0 },
+    uSharpness: { value: 0.04 },
+    uNoiseScale: { value: .35 },
+    uNoiseStrength: { value: 0.0 },   // Strong noise influence
     uTime: { value: 0.0 },
     uColorActive: { value: new THREE.Color(0x000000) },   // default black
-    uColorInactive: { value: new THREE.Color(0x00ff00) }  // default green
+    uColorInactive: { value: new THREE.Color(0xffffff) }  // default green
 };
 
 const material = new THREE.ShaderMaterial({
