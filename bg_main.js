@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import GUI from 'lil-gui';
 import vertexShader from './bg_vertex.glsl?raw';
 import fragmentShader from './bg_fragment.glsl?raw';
-import tileImage from '/Tiles/bg4.png';
+import tileImage from '/Tiles/Tile_300_dm.png';
 
 //
 // Renderer
