@@ -34,9 +34,10 @@ const uniforms = {
     resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
     uTileScale: { value: 20.0 },
     uThreshold: { value: 1.0 },
-    uSharpness: { value: 0.04 },
-    uNoiseScale: { value: .35 },
-    uNoiseStrength: { value: 0.0 },   // Strong noise influence
+    uSharpness: { value: 0.035 },
+    uNoiseScale: { value: 0.2 },
+    uNoiseStrength: { value: 1.0 },   // Strong noise influence
+    uCurveStrength: { value: 3.0 },  // 1 = normal curve, >1 = hold & snap
     uTime: { value: 0.0 },
     uColorActive: { value: new THREE.Color(0x000000) },   // default black
     uColorInactive: { value: new THREE.Color(0xffffff) }  // default green
@@ -76,6 +77,7 @@ gui.add(uniforms.uThreshold, 'value', 0.0, 1.0).name('Threshold');
 gui.add(uniforms.uSharpness, 'value', 0.001, 0.2).name('Sharpness');
 gui.add(uniforms.uNoiseScale, 'value', 0.1, 5.0).name('Noise Scale');
 gui.add(uniforms.uNoiseStrength, 'value', 0.0, 2.0).name('Noise Strength');
+gui.add(uniforms.uCurveStrength, 'value', 0.5, 5.0).name('Curve Strength'); // extended range for testing
 gui.addColor({ color: `#${uniforms.uColorActive.value.getHexString()}` }, 'color')
     .name('Active Color')
     .onChange(c => uniforms.uColorActive.value.set(c));

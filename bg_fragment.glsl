@@ -3,11 +3,12 @@ precision highp float;
 uniform sampler2D  tTile;
 uniform vec2       resolution;
 uniform float      uTileScale;
-uniform float      uThreshold;    // 0 → blank, 0.5 → pattern, 1 → blank
-uniform float      uSharpness;    // edge softness
+uniform float      uThreshold;     // 0 → blank, 0.5 → pattern, 1 → blank
+uniform float      uSharpness;     // edge softness
 uniform float      uNoiseScale;
 uniform float      uTime;
 uniform float      uNoiseStrength;
+uniform float      uCurveStrength; // threshold response curve
 uniform vec3       uColorActive;
 uniform vec3       uColorInactive;
 
@@ -24,6 +25,11 @@ float noise(vec2 p){
     return mix(a,b,u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
 }
 
+// Threshold response remap (curve only, no bias)
+float tR_threshold(float threshold, float curveStrength) {
+    return pow(clamp(threshold, 0.0, 1.0), curveStrength);
+}
+
 void main(){
     vec2 aspect = vec2(resolution.x / resolution.y, 1.0);
     vec2 uv     = (vUv - 0.5) * aspect + 0.5;
@@ -37,11 +43,12 @@ void main(){
     float n = noise(tiled * uNoiseScale + uTime * 0.1);
     float localT = uThreshold + (n - 0.5) * uNoiseStrength;
 
-    // SWAPPED EDGES → both extremes give blank screen
-    float activated = smoothstep(localT + uSharpness,
-                                 localT - uSharpness,
-                                 mask);
+    // Apply threshold response mapping (curve strength only)
+    float adjustedT = tR_threshold(localT, uCurveStrength);
 
-    vec3  color = mix(uColorInactive, uColorActive, activated);
+    // Edge softness still controlled only by uSharpness
+    float activated = smoothstep(adjustedT + uSharpness, adjustedT - uSharpness, mask);
+
+    vec3 color = mix(uColorInactive, uColorActive, activated);
     gl_FragColor = vec4(color, 1.0);
 }
