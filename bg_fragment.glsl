@@ -1,7 +1,8 @@
 precision highp float;
 
-uniform sampler2D  tTile;
-uniform vec2       resolution;
+uniform sampler2D  tTile;         // pattern texture
+uniform sampler2D  tMask;         // circle mask texture
+uniform vec2       resolution;    // viewport resolution
 uniform float      uTileScale;
 uniform float      uThreshold;    // 0 → blank, 0.5 → pattern, 1 → blank
 uniform float      uSharpness;    // edge softness
@@ -24,24 +25,31 @@ float noise(vec2 p){
     return mix(a,b,u.x) + (c-a)*u.y*(1.0-u.x) + (d-b)*u.x*u.y;
 }
 
-void main(){
+void main() {
     vec2 aspect = vec2(resolution.x / resolution.y, 1.0);
     vec2 uv     = (vUv - 0.5) * aspect + 0.5;
 
     vec2 tiled  = uv * uTileScale;
     vec2 tileUV = fract(tiled);
 
-    float mask = 1.0 - texture2D(tTile, tileUV).r;   // 1 = inside shape
+    float mask = 1.0 - texture2D(tTile, tileUV).r;
 
-    // animated per-tile noise
     float n = noise(tiled * uNoiseScale + uTime * 0.1);
     float localT = uThreshold + (n - 0.5) * uNoiseStrength;
 
-    // SWAPPED EDGES → both extremes give blank screen
     float activated = smoothstep(localT + uSharpness,
                                  localT - uSharpness,
                                  mask);
 
-    vec3  color = mix(uColorInactive, uColorActive, activated);
-    gl_FragColor = vec4(color, 1.0);
+    // --- Mask sampling (no inversion now) ---
+    float maskTex = texture2D(tMask, vUv).r;
+
+// Hard edge: if maskTex > 0.5, block the pattern completely
+if (maskTex > 0.5) {
+    gl_FragColor = vec4(uColorInactive, 1.0);  // flat white
+    return;
+}
+
+vec3 color = mix(uColorInactive, uColorActive, activated);
+gl_FragColor = vec4(color, 1.0);
 }
