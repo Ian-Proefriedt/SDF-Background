@@ -1,28 +1,43 @@
+#ifdef GL_ES
 precision highp float;
+#endif
 
-uniform vec2 uResolution;    // viewport resolution (not used yet, but good for scaling)
-uniform vec2 uRectSize;      // half-size of the rectangle in normalized coordinates
-uniform float uCornerRadius; // radius for rounded corners
-uniform float uValue;        // intensity, unused in debug mode
+uniform vec2  uResolution;      // screen resolution
+uniform vec2  uShapePos;        // shape position (normalized)
+uniform float uShapeScale;      // overall scale of shape (half-size)
+uniform float uCornerRatio;     // ratio of corner radius to shape size
+uniform float uInteriorValue;   // brightness inside shape
+uniform float uHaloRadius;      // how far halo extends outside edge
+uniform float uHaloStrength;    // brightness of halo relative to interior
 
 varying vec2 vUv;
 
-// Signed distance for rounded rectangle
-float roundedRectSDF(vec2 p, vec2 b, float r) {
-    vec2 d = abs(p) - b + vec2(r);
-    return length(max(d, 0.0)) - r;
+// --- Rounded box Signed Distance Field ---
+float sdRoundedBox(vec2 p, vec2 halfSize, float radius) {
+    vec2 d = abs(p) - halfSize + vec2(radius);
+    return length(max(d, 0.0)) - radius;
 }
 
 void main() {
-    // convert to centered space [-0.5, 0.5]
-    vec2 centered = vUv - 0.5;
+    // Aspect-correct UV and translate to shape position
+    vec2 uv = (vUv - 0.5) * vec2(uResolution.x / uResolution.y, 1.0);
+    vec2 pos = uv - uShapePos;
 
-    // signed distance (negative inside)
-    float dist = roundedRectSDF(centered, uRectSize, uCornerRadius);
+    // Shape size & corner radius linked to scale
+    float shapeSize = uShapeScale;
+    float cornerRadius = uShapeScale * uCornerRatio;
 
-    // hard edge mask
-    float inside = step(dist, 0.0);
+    // Signed distance (negative = inside, 0 = edge, positive = outside)
+    float dist = sdRoundedBox(pos, vec2(shapeSize), cornerRadius);
 
-    // DEBUG: show mask directly (white = inside)
-    gl_FragColor = vec4(vec3(inside), 1.0);
+    // Interior fill: inside = constant value
+    float interior = step(dist, 0.0) * uInteriorValue;
+
+    // Halo: smooth fade outside edge (only for dist > 0)
+    float halo = smoothstep(uHaloRadius, 0.0, dist) * uHaloStrength;
+
+    // Combine (max ensures interior dominates inside)
+    float sdfValue = max(interior, halo);
+
+    gl_FragColor = vec4(vec3(sdfValue), 1.0);
 }

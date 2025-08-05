@@ -49,10 +49,15 @@ const uniforms = {
     uThreshold: { value: 1.0 },
     uSharpness: { value: 0.04 },
     uNoiseScale: { value: 0.35 },
-    uNoiseStrength: { value: 0.0 },
+    uNoiseStrength: { value: 1.0 },
     uTime: { value: 0.0 },
     uColorActive: { value: new THREE.Color(0x000000) },
-    uColorInactive: { value: new THREE.Color(0xffffff) }
+    uColorInactive: { value: new THREE.Color(0xffffff) },
+
+    // Influence controls
+    uInfluenceRadius:   { value: 0.025 },
+    uInfluenceStrength: { value: 1.0 },
+    uDebugMode:         { value: 0 }
 };
 
 const material = new THREE.ShaderMaterial({
@@ -81,15 +86,18 @@ mesh.frustumCulled = false;
 scene.add(mesh);
 
 //
-// Circle mask scene
+// Logo mask scene (SDF logo fragment)
 //
-// Splat shader uniforms (rectangle parameters)
 const splatUniforms = {
-    uResolution:    { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
-    uRectSize:      { value: new THREE.Vector2(0.25, 0.15) },  // half-size of rectangle (normalized)
-    uCornerRadius:  { value: 0.05 },  // corner roundness (0 = sharp corners)
-    uValue:         { value: 1.0 }    // not used in debug
+    uResolution:     { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    uShapePos:       { value: new THREE.Vector2(0.0, 0.0) },
+    uShapeScale:     { value: 0.25 },
+    uCornerRatio:    { value: 0.3 },
+    uInteriorValue:  { value: 1.0 },  // new
+    uHaloRadius:     { value: 0.05 }, // new
+    uHaloStrength:   { value: 0.5 }   // new
 };
+
 
 const splatMaterial = new THREE.ShaderMaterial({
     uniforms: splatUniforms,
@@ -108,12 +116,21 @@ gui.add(uniforms.uThreshold, 'value', 0.0, 1.0).name('Threshold');
 gui.add(uniforms.uSharpness, 'value', 0.001, 0.2).name('Sharpness');
 gui.add(uniforms.uNoiseScale, 'value', 0.1, 5.0).name('Noise Scale');
 gui.add(uniforms.uNoiseStrength, 'value', 0.0, 2.0).name('Noise Strength');
-gui.add(splatUniforms.uCornerRadius, 'value', 0.0, 0.2).name('Corner Radius');
-gui.add(splatUniforms.uRectSize.value, 'x', 0.1, 1.0).name('Rect Width');
-gui.add(splatUniforms.uRectSize.value, 'y', 0.1, 1.0).name('Rect Height');
-gui.add(splatUniforms.uCornerRadius, 'value', 0.0, 0.2).name('Corner Radius');
-gui.add(splatUniforms.uRectSize.value, 'x', 0.05, 0.5).name('Rect Half Width');
-gui.add(splatUniforms.uRectSize.value, 'y', 0.05, 0.5).name('Rect Half Height');
+
+gui.add(splatUniforms.uShapeScale, 'value', 0.01, 0.5).name('Shape Scale');
+gui.add(splatUniforms.uCornerRatio, 'value', 0.0, 1.0).name('Corner Ratio');
+gui.add(splatUniforms.uShapePos.value, 'x', -1.0, 1.0).name('Shape X');
+gui.add(splatUniforms.uShapePos.value, 'y', -1.0, 1.0).name('Shape Y');
+
+gui.add(splatUniforms.uInteriorValue, 'value', 0.0, 1.0).name('Interior Value');
+gui.add(splatUniforms.uHaloRadius, 'value', 0.0, 0.2).name('Halo Radius');
+gui.add(splatUniforms.uHaloStrength, 'value', 0.0, 1.0).name('Halo Strength');
+
+gui.add(uniforms.uInfluenceRadius, 'value', 0.0, 0.5).name('Influence Radius');
+gui.add(uniforms.uInfluenceStrength, 'value', 0.0, 1.0).name('Influence Strength');
+gui.add(uniforms.uDebugMode, 'value', { Final: 0, MaskSDF: 1, Influence: 2 }).name('Debug Mode');
+gui.addColor(uniforms.uColorActive, 'value').name('Active Color');
+gui.addColor(uniforms.uColorInactive, 'value').name('Inactive Color');
 
 //
 // Resize
@@ -121,7 +138,7 @@ gui.add(splatUniforms.uRectSize.value, 'y', 0.05, 0.5).name('Rect Half Height');
 window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
     uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
-    splatUniforms.resolution.value.set(window.innerWidth, window.innerHeight);
+    splatUniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
     maskTarget.setSize(window.innerWidth, window.innerHeight);
 });
 
@@ -131,13 +148,13 @@ window.addEventListener('resize', () => {
 function animate(t) {
     uniforms.uTime.value = t * 0.001;
 
-    // Render circle mask to maskTarget
+    // Render logo mask (SDF) to maskTarget
     renderer.setRenderTarget(maskTarget);
     renderer.clear();
     renderer.render(splatScene, camera);
     renderer.setRenderTarget(null);
 
-    // Render main scene using mask
+    // Render main scene using SDF mask
     renderer.render(scene, camera);
 
     requestAnimationFrame(animate);
