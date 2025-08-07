@@ -1,15 +1,18 @@
 precision highp float;
 
-uniform sampler2D tTarget; // current influence texture
-uniform vec2 point;        // normalized click position (0–1)
-uniform float radius;      // influence radius
-uniform float strength;    // influence strength
+uniform sampler2D tTarget;
+uniform vec2 point;
+uniform float radius;
+uniform float strength;
 
 varying vec2 vUv;
 
 void main() {
-    vec4 base = texture2D(tTarget, vUv);
     float d = distance(vUv, point);
-    float splat = exp(-d * d / radius);
-    gl_FragColor = vec4(base.r + splat * strength, 0.0, 0.0, 1.0);
+    float influence = smoothstep(radius, 0.0, d) * strength;
+
+    float existing = texture2D(tTarget, vUv).r;
+    float result = existing + influence;
+
+    gl_FragColor = vec4(result, 0.0, 0.0, 1.0);
 }
