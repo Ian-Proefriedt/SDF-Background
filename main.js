@@ -1,17 +1,14 @@
 // main.js
 import * as THREE from 'three';
 import { getRecommendedTextureOptions, createDoubleFBO, createRenderTarget, getResolution } from './buffers.js';
-import { createAmbientFluidPasses, createSplatOp, createElasticUVPasses, createLineSplatOp, createFadeOp, createElasticUvSplatOp } from './ops.js';
+import { createAmbientFluidPasses, createElasticUVPasses, createLineSplatOp, createFadeOp, createElasticUvSplatOp } from './ops.js';
 import { initGUI } from './gui.js';
 
 import tileImage from './tile_300_dm.png';
 
 import vertexShader from './shaders/vert.glsl?raw';
 import fragmentShader from './shaders/bg_frag.glsl?raw';
-import influenceFrag from './shaders/influence_frag.glsl?raw';
 import fadeFrag from './shaders/fade_frag.glsl?raw';
-import logoFrag from './shaders/logo_frag.glsl?raw';
-import obstacleFrag from './shaders/obstacle_frag.glsl?raw';
 import advectionFrag from './shaders/advection_frag.glsl?raw';
 import divergenceFrag from './shaders/divergence_frag.glsl?raw';
 import curlFrag from './shaders/curl_frag.glsl?raw';
@@ -147,7 +144,7 @@ const uniforms = {
     uNoise4Opts: { value: new THREE.Vector4(-0.6, -0.3, -0.7, -0.4) },
     uGlobalShape: { value: 1.5 },
     uGlobalOpen: { value: 0.0 },
-    uDyeInfluence: { value: 0.50 }
+    uDyeInfluence: { value: 0.65 }
 };
 
 const material = new THREE.ShaderMaterial({
@@ -302,7 +299,8 @@ function animate() {
             // jello-like: stronger pull with speed but still small (GUI-tunable)
             const base = (window.__UV_STRENGTH_BASE__ ?? 0.015);
             const gain = (window.__UV_STRENGTH_GAIN__ ?? 0.035);
-            const uvStrength = base + gain * Math.min(1.0, delta.length() * 8.0);
+            // reduce pull-in by biasing strength downward and clamping
+            const uvStrength = Math.max(0.0, base + gain * Math.min(1.0, delta.length() * 6.0));
             uvSplat(
                 renderer,
                 camera,

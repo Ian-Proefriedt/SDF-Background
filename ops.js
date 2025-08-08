@@ -343,17 +343,21 @@ void main() {
     vec4 base = texture2D(tUV, vUv);
     vec2 uv0 = base.rg;
 
-    // Tangent direction to motion (safe normalize)
-    vec2 dir = point - prevPoint;
-    vec2 ba = dir; ba.x *= aspectRatio;
-    float lenBa = length(ba);
-    vec2 tan = lenBa > 1e-6 ? (ba / lenBa) : vec2(0.0);
-    vec2 tanUv = vec2(tan.x / aspectRatio, tan.y);
+    // Radial push away from cursor (repulsion), aspect-corrected
+    vec2 toCursor = vUv - point;
+    vec2 toCursorAC = vec2(toCursor.x * aspectRatio, toCursor.y);
+    float d = length(toCursorAC);
+    vec2 dirAC = d > 1e-6 ? (toCursorAC / d) : vec2(0.0);
+    // convert back to UV space
+    vec2 dirUv = vec2(dirAC.x / aspectRatio, dirAC.y);
 
-    float d = lineDist(vUv, prevPoint, point);
     float w = cubicIn(clamp(1.0 - d / radius, 0.0, 1.0));
+    // Add inner dead-zone to avoid attraction exactly under the cursor
+    float innerR = radius * 0.35;
+    float inner = smoothstep(innerR, innerR * 1.6, d);
+    w *= inner;
 
-    vec2 displaced = uv0 + tanUv * (strength * w);
+    vec2 displaced = uv0 + dirUv * (strength * w);
     displaced = clamp(displaced, vec2(0.0), vec2(1.0));
     gl_FragColor = vec4(displaced, base.ba);
 }
