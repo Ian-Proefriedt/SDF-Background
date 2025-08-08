@@ -1,7 +1,7 @@
 // main.js
 import * as THREE from 'three';
-import { createInfluenceBuffer, createLogoBuffer, getRecommendedTextureOptions, createDoubleFBO, createRenderTarget, getResolution } from './buffers.js';
-import { createInfluenceOp, createFadeOp, createLogoOp, createObstacleOp, createAmbientFluidPasses, createSplatOp } from './ops.js';
+import { getRecommendedTextureOptions, createDoubleFBO, createRenderTarget, getResolution } from './buffers.js';
+import { createAmbientFluidPasses, createSplatOp, createElasticUVPasses } from './ops.js';
 import { initGUI } from './gui.js';
 
 import tileImage from './tile_300_dm.png';
@@ -42,18 +42,14 @@ fullscreenTriangle.setAttribute('uv', new THREE.BufferAttribute(new Float32Array
 ]), 2));
 
 const texOpts = getRecommendedTextureOptions();
-// Allow running the influence buffer at a lower resolution for perf
-const influenceScale = 1.0; // set to 0.5 for large perf win
-const influence = createInfluenceBuffer(
-    Math.max(1, Math.floor(window.innerWidth * influenceScale * renderer.getPixelRatio())),
-    Math.max(1, Math.floor(window.innerHeight * influenceScale * renderer.getPixelRatio())),
-    texOpts
-);
-const logoTarget = createLogoBuffer(
+
+// Elastic UV feedback buffer (RG: UV, BA: velocity)
+const elasticUV = createDoubleFBO(
     Math.max(1, Math.floor(window.innerWidth * renderer.getPixelRatio())),
     Math.max(1, Math.floor(window.innerHeight * renderer.getPixelRatio())),
     texOpts
 );
+const { initElasticUV, updateElasticUV } = createElasticUVPasses(fullscreenTriangle);
 
 // Set up a minimal fluid field for ambient background motion (no user interaction)
 const simBaseRes = 128; // mirrors yuga's simRes
@@ -81,18 +77,11 @@ const fluid = createAmbientFluidPasses(fullscreenTriangle, {
 
 const splat = createSplatOp(fullscreenTriangle, splatFrag);
 
-// Deterministic, low-amplitude ambient emitters (constant gentle motion)
-const emitters = [
-    { speed: 0.02, phase: 0.0, radius: 0.02 },
-    { speed: 0.017, phase: 2.1, radius: 0.018 },
-    { speed: 0.013, phase: 4.2, radius: 0.022 }
-];
+// No ambient emitters for truest Yuga-like background (noise-driven, interaction adds energy)
+const emitters = [];
 let startTimeMs = performance.now();
 
-const addInfluence = createInfluenceOp(fullscreenTriangle, influenceFrag);
-const fadeInfluence = createFadeOp(fullscreenTriangle, fadeFrag);
-const { renderLogo, uniforms: logoUniforms } = createLogoOp(fullscreenTriangle, logoFrag);
-const applyObstacle = createObstacleOp(fullscreenTriangle, obstacleFrag);
+// Removed logo/influence pipeline to focus on tile-based background parity
 
 const texture = new THREE.TextureLoader().load(tileImage);
 texture.wrapS = THREE.RepeatWrapping;
@@ -102,14 +91,29 @@ texture.magFilter = THREE.LinearFilter;
 
 const uniforms = {
     tTile: { value: texture },
-    tInfluence: { value: influence.read.texture },
     tDye: { value: dye.read.texture },
+    uVel: { value: velocity.read.texture },
+    uUV: { value: elasticUV.read.texture },
     resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+    uTime: { value: 0 },
     uTileScale: { value: 20.0 },
     uThreshold: { value: 0.0 },
-    uSharpness: { value: 0.04 },
+    uSharpness: { value: 0.0000000001 },
     uColorBase: { value: new THREE.Color(0x000000) },
-    uColorAccent: { value: new THREE.Color(0xffffff) }
+    uColorAccent: { value: new THREE.Color(0xffffff) },
+    uWarpStrength: { value: 0.0 },
+    uNoiseWarpStrength: { value: 0.0 },
+    uNoise: { value: 0 },
+    uNoiseMultiplier: { value: 1.5 },
+    uNoiseFlowStrength: { value: 0.015 },
+    uNoise1Opts: { value: new THREE.Vector2(1.25, 0.15) },
+    uNoise2Opts: { value: new THREE.Vector2(1.75, 0.15) },
+    // uNoise3Opts: x=scaleX, y=speed, z=angle (radians)
+    uNoise3Opts: { value: new THREE.Vector3(3.0, 1.25, 0.4) },
+    uNoise3Strength: { value: 0.65 },
+    uNoise4Opts: { value: new THREE.Vector4(-0.6, -0.3, -0.7, -0.4) },
+    uGlobalShape: { value: 1.5 },
+    uGlobalOpen: { value: 0.0 }
 };
 
 const material = new THREE.ShaderMaterial({
@@ -122,6 +126,18 @@ mesh.frustumCulled = false;
 scene.add(mesh);
 
 const gui = initGUI(uniforms);
+// Add sim parity controls (limited, to avoid GUI bloat)
+const simFolder = gui.addFolder('Fluid (core)');
+simFolder.add({curl: 0.00015}, 'curl', 0.00001, 0.002, 0.00001).name('Curl Strength').onChange(v=>{
+    // applied each frame below
+    fluid.materials.vorticityMat.uniforms.uCurlStrength.value = v;
+});
+simFolder.add({velDiss: 0.992}, 'velDiss', 0.96, 0.999, 0.0005).name('Velocity Diss').onChange(v=>{
+    // applied each frame
+    fluid.materials.advectionMat.uniforms.uDissipation.value = v;
+});
+simFolder.add({dyeDiss: 0.985}, 'dyeDiss', 0.93, 0.999, 0.0005).name('Dye Diss');
+simFolder.close();
 
 window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -129,52 +145,68 @@ window.addEventListener('resize', () => {
     const drawW = Math.max(1, Math.floor(window.innerWidth * dpr));
     const drawH = Math.max(1, Math.floor(window.innerHeight * dpr));
     uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
-    influence.resize(
-        Math.max(1, Math.floor(window.innerWidth * influenceScale * dpr)),
-        Math.max(1, Math.floor(window.innerHeight * influenceScale * dpr))
-    );
-    logoTarget.setSize(drawW, drawH);
-    logoUniforms.uResolution.value.set(window.innerWidth, window.innerHeight);
+    elasticUV.resize(drawW, drawH);
+    // re-initialize elastic UV after resize to avoid garbage feedback
+    initElasticUV(renderer, camera, elasticUV);
 });
 
-// Ambient-only: no click interaction
+// Ambient-only: no click interaction, no ambient emitters
 
 function animate() {
     // Minimal fluid sim step each frame to produce ambient motion
     const now = performance.now();
     const dt = 1 / 60;
+    uniforms.uTime.value += dt;
 
     // Curl
     fluid.materials.curlMat.uniforms.uVelocity.value = velocity.read.texture;
     fluid.materials.curlMat.uniforms.uTexelSize.value.set(velocity.read.texture.image ? (1/velocity.read.texture.image.width) : (1/velocity.read.width), velocity.read.texture.image ? (1/velocity.read.texture.image.height) : (1/velocity.read.height));
-    renderer.setRenderTarget(curl); renderer.render(fluid.scenes.curl, camera);
+    renderer.setRenderTarget(curl);
+    renderer.render(fluid.scenes.curl, camera);
+    renderer.setRenderTarget(null);
 
     // Vorticity confinement
     fluid.materials.vorticityMat.uniforms.uVelocity.value = velocity.read.texture;
     fluid.materials.vorticityMat.uniforms.uCurl.value = curl.texture;
     fluid.materials.vorticityMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
-    fluid.materials.vorticityMat.uniforms.uCurlStrength.value = 0.0003;
+    fluid.materials.vorticityMat.uniforms.uCurlStrength.value = 0.00015;
     fluid.materials.vorticityMat.uniforms.uDt.value = dt;
-    renderer.setRenderTarget(velocity.write); renderer.render(fluid.scenes.vorticity, camera); velocity.swap();
+    renderer.setRenderTarget(velocity.write);
+    renderer.render(fluid.scenes.vorticity, camera);
+    renderer.setRenderTarget(null);
+    velocity.swap();
 
     // Divergence
     fluid.materials.divergenceMat.uniforms.uVelocity.value = velocity.read.texture;
     fluid.materials.divergenceMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
-    renderer.setRenderTarget(divergence); renderer.render(fluid.scenes.divergence, camera);
+    renderer.setRenderTarget(divergence);
+    renderer.render(fluid.scenes.divergence, camera);
+    renderer.setRenderTarget(null);
 
     // Pressure solve (few iterations)
     fluid.materials.pressureMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
     for (let i = 0; i < 2; i++) {
         fluid.materials.pressureMat.uniforms.uPressure.value = pressure.read.texture;
         fluid.materials.pressureMat.uniforms.uDivergence.value = divergence.texture;
-        renderer.setRenderTarget(pressure.write); renderer.render(fluid.scenes.pressure, camera); pressure.swap();
+        renderer.setRenderTarget(pressure.write);
+        renderer.render(fluid.scenes.pressure, camera);
+        renderer.setRenderTarget(null);
+        pressure.swap();
     }
 
     // Subtract pressure gradient
     fluid.materials.gradientSubtractMat.uniforms.uPressure.value = pressure.read.texture;
     fluid.materials.gradientSubtractMat.uniforms.uVelocity.value = velocity.read.texture;
     fluid.materials.gradientSubtractMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
-    renderer.setRenderTarget(velocity.write); renderer.render(fluid.scenes.gradientSubtract, camera); velocity.swap();
+    renderer.setRenderTarget(velocity.write);
+    renderer.render(fluid.scenes.gradientSubtract, camera);
+    renderer.setRenderTarget(null);
+    velocity.swap();
+    uniforms.uVel.value = velocity.read.texture;
+
+    // Elastic UV update (feedback field)
+    updateElasticUV(renderer, camera, elasticUV, velocity.read.texture, 1.0);
+    uniforms.uUV.value = elasticUV.read.texture;
 
     // Advect velocity
     fluid.materials.advectionMat.uniforms.uVelocity.value = velocity.read.texture;
@@ -182,8 +214,11 @@ function animate() {
     fluid.materials.advectionMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
     fluid.materials.advectionMat.uniforms.uDyeTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
     fluid.materials.advectionMat.uniforms.uDt.value = dt;
-    fluid.materials.advectionMat.uniforms.uDissipation.value = 0.985;
-    renderer.setRenderTarget(velocity.write); renderer.render(fluid.scenes.advection, camera); velocity.swap();
+    fluid.materials.advectionMat.uniforms.uDissipation.value = 0.992;
+    renderer.setRenderTarget(velocity.write);
+    renderer.render(fluid.scenes.advection, camera);
+    renderer.setRenderTarget(null);
+    velocity.swap();
 
     // Advect dye
     fluid.materials.advectionMat.uniforms.uVelocity.value = velocity.read.texture;
@@ -191,11 +226,14 @@ function animate() {
     fluid.materials.advectionMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
     fluid.materials.advectionMat.uniforms.uDyeTexelSize.value.set(1 / dyeRes.width, 1 / dyeRes.height);
     fluid.materials.advectionMat.uniforms.uDt.value = dt;
-    fluid.materials.advectionMat.uniforms.uDissipation.value = 0.97;
-    renderer.setRenderTarget(dye.write); renderer.render(fluid.scenes.advection, camera); dye.swap();
+    fluid.materials.advectionMat.uniforms.uDissipation.value = 0.985;
+    renderer.setRenderTarget(dye.write);
+    renderer.render(fluid.scenes.advection, camera);
+    renderer.setRenderTarget(null);
+    dye.swap();
     uniforms.tDye.value = dye.read.texture;
 
-    // Deterministic continuous seeding along slow orbits for constant presence
+    // Deterministic continuous seeding along slow orbits for constant presence (disabled by default)
     const t = (now - startTimeMs) * 0.001;
     for (let i = 0; i < emitters.length; i++) {
         const e = emitters[i];
@@ -215,13 +253,9 @@ function animate() {
         );
         splat(renderer, camera, dye, p, e.radius, dyeColor);
     }
-
-    // For now, just fade and render background using current influence buffer
-    renderLogo(renderer, camera, logoTarget);
-    applyObstacle(renderer, camera, influence, logoTarget);
-    fadeInfluence(renderer, camera, influence);
-    uniforms.tInfluence.value = influence.read.texture;
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
 }
+// Initialize elastic UV feedback before starting the loop
+initElasticUV(renderer, camera, elasticUV);
 animate();

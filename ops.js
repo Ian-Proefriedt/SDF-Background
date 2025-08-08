@@ -196,7 +196,8 @@ export function createAmbientFluidPasses(fullscreenTriangle, shaders, options = 
             uShading: { value: 1.0 }
         },
         vertexShader: fullscreenVert,
-        fragmentShader: displayFrag
+        fragmentShader: displayFrag,
+        transparent: true
     });
 
     const makeScene = (material) => {
@@ -253,4 +254,106 @@ export function createSplatOp(fullscreenTriangle, splatFrag) {
     }
 
     return splat;
+}
+
+// Elastic UV feedback passes (Yuga-style)
+// Maintains a 4-channel texture where RG stores previous UV and BA stores previous velocity.
+// Two passes are used:
+// - init: writes initial UV = vUv and velocity = 0
+// - update: integrates towards current vUv with damping and adds small velocity from the fluid field
+export function createElasticUVPasses(fullscreenTriangle) {
+    const initMaterial = new THREE.ShaderMaterial({
+        uniforms: {},
+        vertexShader: fullscreenVert,
+        fragmentShader: `
+precision highp float;
+varying vec2 vUv;
+void main(){
+    gl_FragColor = vec4(vUv, 0.0, 0.0);
+}
+        `,
+        depthTest: false,
+        depthWrite: false,
+        transparent: false
+    });
+
+    const updateUniforms = {
+        tDiffuse: { value: null }, // previous elastic UV buffer
+        tVel: { value: null },     // velocity field (RG)
+        dtRatio: { value: 1.0 }
+    };
+
+    const updateMaterial = new THREE.ShaderMaterial({
+        uniforms: updateUniforms,
+        vertexShader: fullscreenVert,
+        fragmentShader: `
+precision highp float;
+uniform sampler2D tDiffuse;
+uniform sampler2D tVel;
+uniform float dtRatio;
+varying vec2 vUv;
+
+// Mirrors the logic in Yuga's elastic pass
+float cubicIn(float t) { return t * t * t; }
+
+void main(){
+    vec2 vel = texture2D(tVel, vUv).rg;
+    vec4 prev = texture2D(tDiffuse, vUv);
+    vec2 prevUV = prev.rg;
+    vec2 prevVel = prev.ba;
+
+    vec2 disp = vUv - prevUV;
+    vec2 dispNor = clamp(normalize(disp), vec2(-1.0), vec2(1.0));
+    float len = length(disp);
+
+    // integrate towards current UV
+    prevVel += dispNor * (len * 0.03) * dtRatio;
+    // add small contribution from fluid velocity (scaled as in Yuga)
+    prevVel += vel * -0.00002 * dtRatio;
+
+    // damping
+    prevVel *= exp2(log2(0.925) * dtRatio);
+
+    // advance UV by vel
+    prevUV += prevVel * dtRatio;
+
+    gl_FragColor = vec4(prevUV, prevVel);
+}
+        `,
+        depthTest: false,
+        depthWrite: false,
+        transparent: false
+    });
+
+    const initScene = new THREE.Scene();
+    initScene.add(new THREE.Mesh(fullscreenTriangle, initMaterial));
+
+    const updateScene = new THREE.Scene();
+    updateScene.add(new THREE.Mesh(fullscreenTriangle, updateMaterial));
+
+    function initElasticUV(renderer, camera, uvDoubleFBO) {
+        // write initial UV once (twice to ensure both ping and pong have valid data)
+        renderer.setRenderTarget(uvDoubleFBO.write);
+        renderer.render(initScene, camera);
+        renderer.setRenderTarget(null);
+        uvDoubleFBO.swap();
+
+        renderer.setRenderTarget(uvDoubleFBO.write);
+        renderer.render(initScene, camera);
+        renderer.setRenderTarget(null);
+        uvDoubleFBO.swap();
+    }
+
+    function updateElasticUV(renderer, camera, uvDoubleFBO, velocityTexture, dtRatio) {
+        updateUniforms.tDiffuse.value = uvDoubleFBO.read.texture;
+        updateUniforms.tVel.value = velocityTexture;
+        updateUniforms.dtRatio.value = dtRatio;
+
+        renderer.setRenderTarget(uvDoubleFBO.write);
+        renderer.render(updateScene, camera);
+        renderer.setRenderTarget(null);
+        uvDoubleFBO.swap();
+    }
+
+    return { initElasticUV, updateElasticUV };
 }
