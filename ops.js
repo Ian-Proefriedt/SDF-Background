@@ -1,5 +1,8 @@
 import * as THREE from 'three';
 import fullscreenVert from './shaders/vert.glsl?raw';
+import elasticUvSplatFrag from './shaders/elastic_uv_splat_frag.glsl?raw';
+import elasticUvUpdateFrag from './shaders/elastic_uv_update_frag.glsl?raw';
+import elasticUvInitFrag from './shaders/elastic_uv_init_frag.glsl?raw';
 
 export function createInfluenceOp(fullscreenTriangle, influenceFrag) {
     const uniforms = {
@@ -312,56 +315,7 @@ export function createElasticUvSplatOp(fullscreenTriangle) {
     const material = new THREE.ShaderMaterial({
         uniforms,
         vertexShader: fullscreenVert,
-        fragmentShader: `
-precision highp float;
-uniform sampler2D tUV;
-uniform float aspectRatio;
-uniform vec2 point;
-uniform vec2 prevPoint;
-uniform float radius;
-uniform float strength;
-varying vec2 vUv;
-
-float lineDist(vec2 uv, vec2 p1, vec2 p2) {
-    vec2 pa = uv - p1;
-    vec2 ba = p2 - p1;
-    // aspect correction
-    pa.x *= aspectRatio;
-    ba.x *= aspectRatio;
-    float baLen2 = dot(ba, ba);
-    if (baLen2 < 1e-8) {
-        // treat as point splat
-        return length(pa);
-    }
-    float h = clamp(dot(pa, ba) / baLen2, 0.0, 1.0);
-    return length(pa - ba * h);
-}
-
-float cubicIn(float t) { return t * t * t; }
-
-void main() {
-    vec4 base = texture2D(tUV, vUv);
-    vec2 uv0 = base.rg;
-
-    // Radial push away from cursor (repulsion), aspect-corrected
-    vec2 toCursor = vUv - point;
-    vec2 toCursorAC = vec2(toCursor.x * aspectRatio, toCursor.y);
-    float d = length(toCursorAC);
-    vec2 dirAC = d > 1e-6 ? (toCursorAC / d) : vec2(0.0);
-    // convert back to UV space
-    vec2 dirUv = vec2(dirAC.x / aspectRatio, dirAC.y);
-
-    float w = cubicIn(clamp(1.0 - d / radius, 0.0, 1.0));
-    // Add inner dead-zone to avoid attraction exactly under the cursor
-    float innerR = radius * 0.35;
-    float inner = smoothstep(innerR, innerR * 1.6, d);
-    w *= inner;
-
-    vec2 displaced = uv0 + dirUv * (strength * w);
-    displaced = clamp(displaced, vec2(0.0), vec2(1.0));
-    gl_FragColor = vec4(displaced, base.ba);
-}
-        `,
+        fragmentShader: elasticUvSplatFrag,
         depthTest: false,
         depthWrite: false,
         transparent: false
@@ -396,13 +350,7 @@ export function createElasticUVPasses(fullscreenTriangle) {
     const initMaterial = new THREE.ShaderMaterial({
         uniforms: {},
         vertexShader: fullscreenVert,
-        fragmentShader: `
-precision highp float;
-varying vec2 vUv;
-void main(){
-    gl_FragColor = vec4(vUv, 0.0, 0.0);
-}
-        `,
+        fragmentShader: elasticUvInitFrag,
         depthTest: false,
         depthWrite: false,
         transparent: false
@@ -422,50 +370,7 @@ void main(){
     const updateMaterial = new THREE.ShaderMaterial({
         uniforms: updateUniforms,
         vertexShader: fullscreenVert,
-        fragmentShader: `
-precision highp float;
-uniform sampler2D tDiffuse;
-uniform sampler2D tVel;
-uniform float dtRatio;
-uniform float uStiffness;
-uniform float uDamping;
-uniform float uRelax;
-uniform float uSnapThreshold;
-uniform float uSnapStrength;
-varying vec2 vUv;
-
-    // Mirrors the logic in Yuga's elastic pass (with stronger stiffness and damping)
-    float cubicIn(float t) { return t * t * t; }
-
-void main(){
-    vec2 vel = texture2D(tVel, vUv).rg;
-    vec4 prev = texture2D(tDiffuse, vUv);
-    vec2 prevUV = prev.rg;
-    vec2 prevVel = prev.ba;
-
-    vec2 disp = vUv - prevUV;
-    vec2 dispNor = clamp(normalize(disp), vec2(-1.0), vec2(1.0));
-    float len = length(disp);
-
-    // integrate towards current UV (stiffness uniform)
-    prevVel += dispNor * (len * uStiffness) * dtRatio;
-    // no coupling from velocity to UV to keep effect strictly local
-
-    // damping uniform
-    prevVel *= exp2(log2(uDamping) * dtRatio);
-
-    // advance UV by vel and relax slightly towards identity to smooth residuals
-    prevUV += prevVel * dtRatio;
-    // near rest: hard snap UV back to identity for exact SDF band
-    float dispLen = length(disp);
-    float velLen = length(prevVel);
-    float nearRest = 1.0 - smoothstep(uSnapThreshold, uSnapThreshold * 4.0, max(dispLen, velLen));
-    float snapAmt = clamp(uSnapStrength * nearRest, 0.0, 1.0);
-    prevUV = mix(prevUV, vUv, snapAmt + clamp(uRelax, 0.0, 1.0) * dtRatio);
-
-    gl_FragColor = vec4(prevUV, prevVel);
-}
-        `,
+        fragmentShader: elasticUvUpdateFrag,
         depthTest: false,
         depthWrite: false,
         transparent: false
