@@ -17,6 +17,7 @@ uniform float uTileScale;     // GUI: overall tile frequency
 uniform float uThreshold;     // GUI: opening/bias control
 uniform float uSharpness;     // GUI: edge softness
 uniform float uNoise3Strength; // GUI: strength for N3 branch only
+uniform float uDyeInfluence;   // GUI: how much dye affects opening
 
 uniform int uNoise;
 uniform float uNoiseMultiplier;
@@ -142,8 +143,9 @@ void main() {
 
     vec2 bgUV = texture2D(uUV, vUv).rg;
 
-    vec2 vel = texture2D(uVel, bgUV).rg * -0.001 * uNoiseMultiplier;
-    float dye = fc(quadraticOut(texture2D(tDye, bgUV).r), 0.01, 1.0, 0.0, 0.6);
+    // optionally sample velocity for subtle flow; set to zero for pure elastic return
+    vec2 vel = vec2(0.0);
+    float dye = fc(quadraticOut(texture2D(tDye, bgUV).r), 0.05, 1.0, 0.0, 1.0);
 
     float n1 = 0.0;
     if (uNoise == 0) {
@@ -168,15 +170,15 @@ void main() {
     float dist = 1.0 - texture2D(tTile, uv).r;
 
     // Threshold/open bias from GUI
-    float diff = 0.075 + (uThreshold - 0.5) * 0.5;
+    float diff = 0.075 + (uThreshold - 0.5) * 0.35; // slightly reduce global opening
     diff += n1;
     diff += uGlobalOpen;
-    diff += dye * uNoiseMultiplier;
+    diff += dye * uDyeInfluence;
     diff *= uGlobalShape;
 
     // Anti-aliasing: derive smoothing from SDF gradients and GUI sharpness
     float sdfFwidth = fwidth(dist);
-    float border = max(ww + 0.0175, uSharpness) + sdfFwidth * 0.75;
+    float border = max(ww + 0.0175, uSharpness) + sdfFwidth * 0.5;
     float shape = fl(dist, 0.0, 1.0, border, fc(diff, 0.0, 1.0, 0.0, 1.0));
 
     // No logo: base and front colors only

@@ -52,15 +52,15 @@ export function createFadeOp(fullscreenTriangle, fadeFrag) {
     const scene = new THREE.Scene();
     scene.add(new THREE.Mesh(fullscreenTriangle, material));
 
-    function fadeInfluence(renderer, camera, influence) {
-        uniforms.tSource.value = influence.read.texture;
-        renderer.setRenderTarget(influence.write);
+    function fade(renderer, camera, targetDoubleFBO) {
+        uniforms.tSource.value = targetDoubleFBO.read.texture;
+        renderer.setRenderTarget(targetDoubleFBO.write);
         renderer.render(scene, camera);
         renderer.setRenderTarget(null);
-        influence.swap();
+        targetDoubleFBO.swap();
     }
 
-    return fadeInfluence;
+    return { fade, uniforms };
 }
 
 export function createLogoOp(fullscreenTriangle, logoFrag) {
@@ -256,6 +256,133 @@ export function createSplatOp(fullscreenTriangle, splatFrag) {
     return splat;
 }
 
+export function createLineSplatOp(fullscreenTriangle, lineSplatFrag) {
+    const uniforms = {
+        tTarget: { value: null },
+        aspectRatio: { value: 1.0 },
+        color: { value: new THREE.Vector3(0, 0, 0) },
+        point: { value: new THREE.Vector2(0.5, 0.5) },
+        prevPoint: { value: new THREE.Vector2(0.5, 0.5) },
+        radius: { value: 0.1 },
+        isDye: { value: false }
+    };
+
+    const material = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: fullscreenVert,
+        fragmentShader: lineSplatFrag,
+        blending: THREE.NoBlending,
+        depthTest: false,
+        depthWrite: false,
+        transparent: false
+    });
+
+    const scene = new THREE.Scene();
+    scene.add(new THREE.Mesh(fullscreenTriangle, material));
+
+    function lineSplat(renderer, camera, targetDoubleFBO, aspect, point, prevPoint, radius, colorVec3, isDye) {
+        uniforms.tTarget.value = targetDoubleFBO.read.texture;
+        uniforms.aspectRatio.value = aspect;
+        uniforms.point.value.copy(point);
+        uniforms.prevPoint.value.copy(prevPoint);
+        uniforms.radius.value = radius;
+        uniforms.color.value.set(colorVec3.x, colorVec3.y, colorVec3.z);
+        uniforms.isDye.value = !!isDye;
+
+        renderer.setRenderTarget(targetDoubleFBO.write);
+        renderer.render(scene, camera);
+        renderer.setRenderTarget(null);
+        targetDoubleFBO.swap();
+    }
+
+    return lineSplat;
+}
+
+// Elastic UV localized displacement splat
+export function createElasticUvSplatOp(fullscreenTriangle) {
+    const uniforms = {
+        tUV: { value: null },
+        aspectRatio: { value: 1.0 },
+        point: { value: new THREE.Vector2(0.5, 0.5) },
+        prevPoint: { value: new THREE.Vector2(0.5, 0.5) },
+        radius: { value: 0.05 },
+        strength: { value: 0.02 }
+    };
+
+    const material = new THREE.ShaderMaterial({
+        uniforms,
+        vertexShader: fullscreenVert,
+        fragmentShader: `
+precision highp float;
+uniform sampler2D tUV;
+uniform float aspectRatio;
+uniform vec2 point;
+uniform vec2 prevPoint;
+uniform float radius;
+uniform float strength;
+varying vec2 vUv;
+
+float lineDist(vec2 uv, vec2 p1, vec2 p2) {
+    vec2 pa = uv - p1;
+    vec2 ba = p2 - p1;
+    // aspect correction
+    pa.x *= aspectRatio;
+    ba.x *= aspectRatio;
+    float baLen2 = dot(ba, ba);
+    if (baLen2 < 1e-8) {
+        // treat as point splat
+        return length(pa);
+    }
+    float h = clamp(dot(pa, ba) / baLen2, 0.0, 1.0);
+    return length(pa - ba * h);
+}
+
+float cubicIn(float t) { return t * t * t; }
+
+void main() {
+    vec4 base = texture2D(tUV, vUv);
+    vec2 uv0 = base.rg;
+
+    // Tangent direction to motion (safe normalize)
+    vec2 dir = point - prevPoint;
+    vec2 ba = dir; ba.x *= aspectRatio;
+    float lenBa = length(ba);
+    vec2 tan = lenBa > 1e-6 ? (ba / lenBa) : vec2(0.0);
+    vec2 tanUv = vec2(tan.x / aspectRatio, tan.y);
+
+    float d = lineDist(vUv, prevPoint, point);
+    float w = cubicIn(clamp(1.0 - d / radius, 0.0, 1.0));
+
+    vec2 displaced = uv0 + tanUv * (strength * w);
+    displaced = clamp(displaced, vec2(0.0), vec2(1.0));
+    gl_FragColor = vec4(displaced, base.ba);
+}
+        `,
+        depthTest: false,
+        depthWrite: false,
+        transparent: false
+    });
+
+    const scene = new THREE.Scene();
+    scene.add(new THREE.Mesh(fullscreenTriangle, material));
+
+    function uvSplat(renderer, camera, uvDoubleFBO, aspect, point, prevPoint, radius, strength) {
+        uniforms.tUV.value = uvDoubleFBO.read.texture;
+        uniforms.aspectRatio.value = aspect;
+        uniforms.point.value.copy(point);
+        uniforms.prevPoint.value.copy(prevPoint);
+        uniforms.radius.value = radius;
+        uniforms.strength.value = strength;
+
+        renderer.setRenderTarget(uvDoubleFBO.write);
+        renderer.render(scene, camera);
+        renderer.setRenderTarget(null);
+        uvDoubleFBO.swap();
+    }
+
+    return uvSplat;
+}
+
 // Elastic UV feedback passes (Yuga-style)
 // Maintains a 4-channel texture where RG stores previous UV and BA stores previous velocity.
 // Two passes are used:
@@ -280,7 +407,12 @@ void main(){
     const updateUniforms = {
         tDiffuse: { value: null }, // previous elastic UV buffer
         tVel: { value: null },     // velocity field (RG)
-        dtRatio: { value: 1.0 }
+        dtRatio: { value: 1.0 },
+        uStiffness: { value: 0.25 },
+        uDamping: { value: 0.60 },
+        uRelax: { value: 0.04 },
+        uSnapThreshold: { value: 0.002 },
+        uSnapStrength: { value: 1.0 }
     };
 
     const updateMaterial = new THREE.ShaderMaterial({
@@ -291,10 +423,15 @@ precision highp float;
 uniform sampler2D tDiffuse;
 uniform sampler2D tVel;
 uniform float dtRatio;
+uniform float uStiffness;
+uniform float uDamping;
+uniform float uRelax;
+uniform float uSnapThreshold;
+uniform float uSnapStrength;
 varying vec2 vUv;
 
-// Mirrors the logic in Yuga's elastic pass
-float cubicIn(float t) { return t * t * t; }
+    // Mirrors the logic in Yuga's elastic pass (with stronger stiffness and damping)
+    float cubicIn(float t) { return t * t * t; }
 
 void main(){
     vec2 vel = texture2D(tVel, vUv).rg;
@@ -306,16 +443,21 @@ void main(){
     vec2 dispNor = clamp(normalize(disp), vec2(-1.0), vec2(1.0));
     float len = length(disp);
 
-    // integrate towards current UV
-    prevVel += dispNor * (len * 0.03) * dtRatio;
-    // add small contribution from fluid velocity (scaled as in Yuga)
-    prevVel += vel * -0.00002 * dtRatio;
+    // integrate towards current UV (stiffness uniform)
+    prevVel += dispNor * (len * uStiffness) * dtRatio;
+    // no coupling from velocity to UV to keep effect strictly local
 
-    // damping
-    prevVel *= exp2(log2(0.925) * dtRatio);
+    // damping uniform
+    prevVel *= exp2(log2(uDamping) * dtRatio);
 
-    // advance UV by vel
+    // advance UV by vel and relax slightly towards identity to smooth residuals
     prevUV += prevVel * dtRatio;
+    // near rest: hard snap UV back to identity for exact SDF band
+    float dispLen = length(disp);
+    float velLen = length(prevVel);
+    float nearRest = 1.0 - smoothstep(uSnapThreshold, uSnapThreshold * 4.0, max(dispLen, velLen));
+    float snapAmt = clamp(uSnapStrength * nearRest, 0.0, 1.0);
+    prevUV = mix(prevUV, vUv, snapAmt + clamp(uRelax, 0.0, 1.0) * dtRatio);
 
     gl_FragColor = vec4(prevUV, prevVel);
 }
@@ -344,10 +486,15 @@ void main(){
         uvDoubleFBO.swap();
     }
 
-    function updateElasticUV(renderer, camera, uvDoubleFBO, velocityTexture, dtRatio) {
+    function updateElasticUV(renderer, camera, uvDoubleFBO, velocityTexture, dtRatio, stiffness, damping, relax, snapThreshold, snapStrength) {
         updateUniforms.tDiffuse.value = uvDoubleFBO.read.texture;
         updateUniforms.tVel.value = velocityTexture;
         updateUniforms.dtRatio.value = dtRatio;
+        if (typeof stiffness === 'number') updateUniforms.uStiffness.value = stiffness;
+        if (typeof damping === 'number') updateUniforms.uDamping.value = damping;
+        if (typeof relax === 'number') updateUniforms.uRelax.value = relax;
+        if (typeof snapThreshold === 'number') updateUniforms.uSnapThreshold.value = snapThreshold;
+        if (typeof snapStrength === 'number') updateUniforms.uSnapStrength.value = snapStrength;
 
         renderer.setRenderTarget(uvDoubleFBO.write);
         renderer.render(updateScene, camera);

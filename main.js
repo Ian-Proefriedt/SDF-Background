@@ -1,7 +1,7 @@
 // main.js
 import * as THREE from 'three';
 import { getRecommendedTextureOptions, createDoubleFBO, createRenderTarget, getResolution } from './buffers.js';
-import { createAmbientFluidPasses, createSplatOp, createElasticUVPasses } from './ops.js';
+import { createAmbientFluidPasses, createSplatOp, createElasticUVPasses, createLineSplatOp, createFadeOp, createElasticUvSplatOp } from './ops.js';
 import { initGUI } from './gui.js';
 
 import tileImage from './tile_300_dm.png';
@@ -75,10 +75,43 @@ const fluid = createAmbientFluidPasses(fullscreenTriangle, {
     displayFrag
 }, { manualFiltering: !texOpts.supportLinearFiltering });
 
-const splat = createSplatOp(fullscreenTriangle, splatFrag);
+const lineSplat = createLineSplatOp(fullscreenTriangle, splatFrag);
+const uvSplat = createElasticUvSplatOp(fullscreenTriangle);
+const { fade: fadeRT, uniforms: fadeUniforms } = createFadeOp(fullscreenTriangle, fadeFrag);
+fadeUniforms.decay.value = 0.97; // decay velocity/dye every frame to kill wake
+
+// Initialize sim defaults for a more elastic/less fluid look
+fluid.materials.vorticityMat.uniforms.uCurlStrength.value = 0.0; // disable curl by default
+fluid.materials.advectionMat.uniforms.uDissipation.value = 0.9995; // even stronger velocity decay
 
 // No ambient emitters for truest Yuga-like background (noise-driven, interaction adds energy)
 const emitters = [];
+
+// Pointer interaction state (Yuga-style)
+const pointer = {
+    position: new THREE.Vector2(0.5, 0.5),
+    prevPosition: new THREE.Vector2(0.5, 0.5),
+    lastUpdate: 0,
+    velocity: 0
+};
+const INTERACTION = {
+    force: 2000,
+    radiusBase: 0.035,
+    radiusGain: 0.2,
+    speedScale: 8.0,
+    dyeStrength: 1.0
+};
+const aspectRatio = () => (uniforms.resolution.value.x / uniforms.resolution.value.y);
+
+function onPointer(e) {
+    const rect = renderer.domElement.getBoundingClientRect();
+    const cx = (e.clientX - rect.left) / rect.width;
+    const cy = 1.0 - (e.clientY - rect.top) / rect.height;
+    pointer.position.set(cx, cy);
+}
+
+renderer.domElement.addEventListener('pointerdown', onPointer);
+renderer.domElement.addEventListener('pointermove', onPointer);
 let startTimeMs = performance.now();
 
 // Removed logo/influence pipeline to focus on tile-based background parity
@@ -113,7 +146,8 @@ const uniforms = {
     uNoise3Strength: { value: 0.65 },
     uNoise4Opts: { value: new THREE.Vector4(-0.6, -0.3, -0.7, -0.4) },
     uGlobalShape: { value: 1.5 },
-    uGlobalOpen: { value: 0.0 }
+    uGlobalOpen: { value: 0.0 },
+    uDyeInfluence: { value: 0.50 }
 };
 
 const material = new THREE.ShaderMaterial({
@@ -138,6 +172,9 @@ simFolder.add({velDiss: 0.992}, 'velDiss', 0.96, 0.999, 0.0005).name('Velocity D
 });
 simFolder.add({dyeDiss: 0.985}, 'dyeDiss', 0.93, 0.999, 0.0005).name('Dye Diss');
 simFolder.close();
+// Interaction GUI removed per request; values fixed below.
+
+// Elastic GUI removed per request; fixed values applied below.
 
 window.addEventListener('resize', () => {
     renderer.setSize(window.innerWidth, window.innerHeight);
@@ -165,16 +202,17 @@ function animate() {
     renderer.render(fluid.scenes.curl, camera);
     renderer.setRenderTarget(null);
 
-    // Vorticity confinement
-    fluid.materials.vorticityMat.uniforms.uVelocity.value = velocity.read.texture;
-    fluid.materials.vorticityMat.uniforms.uCurl.value = curl.texture;
-    fluid.materials.vorticityMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
-    fluid.materials.vorticityMat.uniforms.uCurlStrength.value = 0.00015;
-    fluid.materials.vorticityMat.uniforms.uDt.value = dt;
-    renderer.setRenderTarget(velocity.write);
-    renderer.render(fluid.scenes.vorticity, camera);
-    renderer.setRenderTarget(null);
-    velocity.swap();
+    // Vorticity confinement (disabled for elastic look)
+    if (fluid.materials.vorticityMat.uniforms.uCurlStrength.value > 0.0) {
+        fluid.materials.vorticityMat.uniforms.uVelocity.value = velocity.read.texture;
+        fluid.materials.vorticityMat.uniforms.uCurl.value = curl.texture;
+        fluid.materials.vorticityMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
+        fluid.materials.vorticityMat.uniforms.uDt.value = dt;
+        renderer.setRenderTarget(velocity.write);
+        renderer.render(fluid.scenes.vorticity, camera);
+        renderer.setRenderTarget(null);
+        velocity.swap();
+    }
 
     // Divergence
     fluid.materials.divergenceMat.uniforms.uVelocity.value = velocity.read.texture;
@@ -204,54 +242,111 @@ function animate() {
     velocity.swap();
     uniforms.uVel.value = velocity.read.texture;
 
+    // Additional decay to suppress wake and keep locality
+    fadeUniforms.decay.value = 0.985; // velocity fade
+    fadeRT(renderer, camera, velocity);
+    fadeUniforms.decay.value = 0.95;  // stronger dye fade to remove tails
+    fadeRT(renderer, camera, dye);
+
     // Elastic UV update (feedback field)
-    updateElasticUV(renderer, camera, elasticUV, velocity.read.texture, 1.0);
+    const stiffness = (window.__ELASTIC_STIFFNESS__ ?? 0.25);
+    const damping = (window.__ELASTIC_DAMPING__ ?? 0.60);
+    const relax =  (window.__ELASTIC_RELAX__ ?? 0.04);
+    const snapThresh = (window.__ELASTIC_SNAP_THRESH__ ?? 0.002);
+    const snapStrength = (window.__ELASTIC_SNAP_STRENGTH__ ?? 1.0);
+    updateElasticUV(renderer, camera, elasticUV, velocity.read.texture, 1.0, stiffness, damping, relax, snapThresh, snapStrength);
+    // After update, bg shader samples latest elasticUV
     uniforms.uUV.value = elasticUV.read.texture;
 
-    // Advect velocity
-    fluid.materials.advectionMat.uniforms.uVelocity.value = velocity.read.texture;
-    fluid.materials.advectionMat.uniforms.uSource.value = velocity.read.texture;
-    fluid.materials.advectionMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
-    fluid.materials.advectionMat.uniforms.uDyeTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
-    fluid.materials.advectionMat.uniforms.uDt.value = dt;
-    fluid.materials.advectionMat.uniforms.uDissipation.value = 0.992;
-    renderer.setRenderTarget(velocity.write);
-    renderer.render(fluid.scenes.advection, camera);
-    renderer.setRenderTarget(null);
-    velocity.swap();
+    // Advect velocity (disabled to avoid propagation along geometry)
+    const ADVECT_VELOCITY = false;
+    if (ADVECT_VELOCITY) {
+        fluid.materials.advectionMat.uniforms.uVelocity.value = velocity.read.texture;
+        fluid.materials.advectionMat.uniforms.uSource.value = velocity.read.texture;
+        fluid.materials.advectionMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
+        fluid.materials.advectionMat.uniforms.uDyeTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
+        fluid.materials.advectionMat.uniforms.uDt.value = dt;
+        renderer.setRenderTarget(velocity.write);
+        renderer.render(fluid.scenes.advection, camera);
+        renderer.setRenderTarget(null);
+        velocity.swap();
+    }
 
-    // Advect dye
-    fluid.materials.advectionMat.uniforms.uVelocity.value = velocity.read.texture;
-    fluid.materials.advectionMat.uniforms.uSource.value = dye.read.texture;
-    fluid.materials.advectionMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
-    fluid.materials.advectionMat.uniforms.uDyeTexelSize.value.set(1 / dyeRes.width, 1 / dyeRes.height);
-    fluid.materials.advectionMat.uniforms.uDt.value = dt;
-    fluid.materials.advectionMat.uniforms.uDissipation.value = 0.985;
-    renderer.setRenderTarget(dye.write);
-    renderer.render(fluid.scenes.advection, camera);
-    renderer.setRenderTarget(null);
-    dye.swap();
+    // Advect dye (disabled to avoid trailing tail). Enable if you want dye to flow.
+    const ADVECT_DYE = false;
+    if (ADVECT_DYE) {
+        fluid.materials.advectionMat.uniforms.uVelocity.value = velocity.read.texture;
+        fluid.materials.advectionMat.uniforms.uSource.value = dye.read.texture;
+        fluid.materials.advectionMat.uniforms.uTexelSize.value.set(1 / simRes.width, 1 / simRes.height);
+        fluid.materials.advectionMat.uniforms.uDyeTexelSize.value.set(1 / dyeRes.width, 1 / dyeRes.height);
+        fluid.materials.advectionMat.uniforms.uDt.value = dt;
+        fluid.materials.advectionMat.uniforms.uDissipation.value = 0.995;
+        renderer.setRenderTarget(dye.write);
+        renderer.render(fluid.scenes.advection, camera);
+        renderer.setRenderTarget(null);
+        dye.swap();
+    }
     uniforms.tDye.value = dye.read.texture;
 
-    // Deterministic continuous seeding along slow orbits for constant presence (disabled by default)
-    const t = (now - startTimeMs) * 0.001;
-    for (let i = 0; i < emitters.length; i++) {
-        const e = emitters[i];
-        const ang = t * e.speed + e.phase;
-        const r = 0.35 + 0.1 * Math.sin(ang * 0.7 + i);
-        const p = new THREE.Vector2(0.5 + r * Math.cos(ang), 0.5 + r * Math.sin(ang));
-        // approximate tangent direction for velocity push
-        const vel = new THREE.Vector3(-Math.sin(ang), Math.cos(ang), 0).multiplyScalar(150);
-        splat(renderer, camera, velocity, p, e.radius, vel);
-        // low-saturation dye
-        const hue = (i * 0.3 + t * 0.02) % 1.0;
-        const dyeStrength = 0.4;
-        const dyeColor = new THREE.Vector3(
-            dyeStrength * (0.5 + 0.5 * Math.sin(6.2831 * hue)),
-            dyeStrength * (0.5 + 0.5 * Math.sin(6.2831 * (hue + 0.33))),
-            dyeStrength * (0.5 + 0.5 * Math.sin(6.2831 * (hue + 0.66)))
-        );
-        splat(renderer, camera, dye, p, e.radius, dyeColor);
+    // Yuga-style pointer splats (line-based)
+    const delta = pointer.position.clone().sub(pointer.prevPosition);
+    if (Math.abs(delta.x) > 0.0 || Math.abs(delta.y) > 0.0) {
+        const elapsed = (now - pointer.lastUpdate) * 0.001;
+        if (elapsed >= 0.014) {
+            pointer.velocity += 3.0 * delta.length();
+            const skipLine = elapsed > 0.1; // if long gap, collapse to point
+
+            // Perpendicular UV displacement: elastic local move of the pattern
+            const instSpeed = Math.min(1.0, delta.length() * INTERACTION.speedScale);
+            const radius = Math.max(0.0005, INTERACTION.radiusBase + INTERACTION.radiusGain * instSpeed);
+            // jello-like: stronger pull with speed but still small (GUI-tunable)
+            const base = (window.__UV_STRENGTH_BASE__ ?? 0.015);
+            const gain = (window.__UV_STRENGTH_GAIN__ ?? 0.035);
+            const uvStrength = base + gain * Math.min(1.0, delta.length() * 8.0);
+            uvSplat(
+                renderer,
+                camera,
+                elasticUV,
+                aspectRatio(),
+                pointer.position,
+                skipLine ? pointer.position : pointer.prevPosition,
+                radius,
+                uvStrength
+            );
+
+            // into velocity (keep minimal to avoid wake)
+            const force = new THREE.Vector3(delta.x, delta.y, 0).multiplyScalar(INTERACTION.force * 0.25);
+            lineSplat(
+                renderer,
+                camera,
+                velocity,
+                aspectRatio(),
+                pointer.position,
+                skipLine ? pointer.position : pointer.prevPosition,
+                radius,
+                force,
+                false
+            );
+
+            // into dye (clamped)
+            const dyeColor = new THREE.Vector3(INTERACTION.dyeStrength,INTERACTION.dyeStrength,INTERACTION.dyeStrength);
+            lineSplat(
+                renderer,
+                camera,
+                dye,
+                aspectRatio(),
+                pointer.position,
+                skipLine ? pointer.position : pointer.prevPosition,
+                radius,
+                dyeColor,
+                true
+            );
+
+            pointer.lastUpdate = now;
+            pointer.prevPosition.copy(pointer.position);
+        }
+        pointer.velocity *= Math.exp(Math.log(0.85));
+        pointer.velocity = Math.min(1, pointer.velocity);
     }
     renderer.render(scene, camera);
     requestAnimationFrame(animate);

@@ -28,6 +28,6 @@ void main() {
     vec2 coord = vUv - uDt * texture2D(uVelocity, vUv).xy * uTexelSize;
     vec4 result = texture2D(uSource, coord);
 #endif
-    float decay = 1.0 + uDissipation * uDt;
-    gl_FragColor = result / decay;
+    gl_FragColor.rgb = result.rgb * uDissipation;
+    gl_FragColor.a = 1.0;
 }

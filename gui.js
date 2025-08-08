@@ -32,6 +32,9 @@ export function initGUI(uniforms) {
     noiseFolder.add(uniforms.uNoise4Opts.value, 'w', -5.0, 5.0, 0.001).name('N4 uy');
     noiseFolder.open();
 
+    // Dye influence (opening contribution from dye)
+    if (uniforms.uDyeInfluence) gui.add(uniforms.uDyeInfluence, 'value', 0.0, 1.5, 0.01).name('Dye Influence');
+
     // --- Global controls (match Yuga shader params) ---
     if (uniforms.uGlobalShape) gui.add(uniforms.uGlobalShape, 'value', 0.0, 2.0, 0.001).name('Global Shape');
     if (uniforms.uGlobalOpen) gui.add(uniforms.uGlobalOpen, 'value', -1.0, 1.0, 0.001).name('Global Open');
