@@ -1,0 +1,45 @@
+---
+description: Workspace and General Rules
+globs: 
+alwaysApply: true
+---
+
+# Workspace
+
+## General Rules
+- Do not create or push commits unless the user has explicitly requested it
+
+## Architecture
+- Build/dev: Vite 5 (ESM dev server and bundler)
+- Language: JavaScript (ES modules)
+- Graphics: Three.js (WebGL rendering)
+- Shaders: GLSL vertex/fragment, imported as raw strings via Vite `?raw`
+- UI controls: `lil-gui` for runtime uniform tweaking
+- Assets: PNG tile textures under `Tiles/`
+- Styling: Minimal inline CSS in `index.html`
+- Optional/utility deps: `file-saver` (planned for exports), `canvas` (Node canvas; not used in browser path)
+
+## Project Structure
+```
+root/
+├── index.html                  # Entry HTML; loads `bg_main.js` and sets global styles
+├── bg_main.js                  # App entrypoint; sets up Three.js, uniforms, GUI, render loop
+├── bg_vertex.glsl              # Vertex shader for fullscreen triangle
+├── bg_fragment.glsl            # Fragment shader (tiled SDF + noise/threshold mapping)
+├── vite.config.js              # Vite config (dev server, build output dirs)
+├── package.json                # Scripts and dependencies
+├── package-lock.json           # Lockfile
+└── Tiles/                      # Tile textures and design sources
+    ├── Tile_*.png              # Base tile PNGs used by the shader
+    ├── bg4.png                 # Example background/tile asset
+    ├── Binary/                 # Binary-style tile variants (PNG)
+    ├── Grids/                  # Blurred grid variants (PNG)
+    └── Raw/                    # Source design files (GIMP .xcf)
+```
+
+## How to run/build
+- Node 18+ and npm
+- Install: `npm i`
+- Dev: `npm run dev`
+- Build: `npm run build` → outputs to `dist/`
+- Preview: `npm run preview`
