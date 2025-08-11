@@ -46,8 +46,8 @@ void main(){
     // Apply threshold response mapping (curve strength only)
     float adjustedT = tR_threshold(localT, uCurveStrength);
 
-    // Edge softness still controlled only by uSharpness
-    float activated = smoothstep(adjustedT + uSharpness, adjustedT - uSharpness, mask);
+    // Edge softness controlled by uSharpness; ensure edge0 <= edge1 for smoothstep
+    float activated = smoothstep(adjustedT - uSharpness, adjustedT + uSharpness, mask);
 
     vec3 color = mix(uColorInactive, uColorActive, activated);
     gl_FragColor = vec4(color, 1.0);

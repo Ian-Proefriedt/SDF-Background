@@ -8,6 +8,7 @@ import tileImage from '/Tiles/Tile_300_dm.png';
 // Renderer
 //
 const renderer = new THREE.WebGLRenderer();
+renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
 renderer.setSize(window.innerWidth, window.innerHeight);
 document.body.appendChild(renderer.domElement);
 
@@ -40,7 +41,7 @@ const uniforms = {
     uCurveStrength: { value: 3.0 },  // 1 = normal curve, >1 = hold & snap
     uTime: { value: 0.0 },
     uColorActive: { value: new THREE.Color(0x000000) },   // default black
-    uColorInactive: { value: new THREE.Color(0xffffff) }  // default green
+    uColorInactive: { value: new THREE.Color(0xffffff) }  // default white
 };
 
 const material = new THREE.ShaderMaterial({
@@ -89,6 +90,7 @@ gui.addColor({ color: `#${uniforms.uColorInactive.value.getHexString()}` }, 'col
 // Resize
 //
 window.addEventListener('resize', () => {
+    renderer.setPixelRatio(Math.min(2, window.devicePixelRatio || 1));
     renderer.setSize(window.innerWidth, window.innerHeight);
     uniforms.resolution.value.set(window.innerWidth, window.innerHeight);
 });
