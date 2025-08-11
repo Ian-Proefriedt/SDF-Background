@@ -3,6 +3,7 @@ import GUI from 'lil-gui';
 import vertexShader from './bg_vertex.glsl?raw';
 import fragmentShader from './bg_fragment.glsl?raw';
 import tileImage from '/Tiles/Tile_300_dm.png';
+import { initTileHotswap } from './bg_tileswap.js';
 
 //
 // Renderer
@@ -85,6 +86,9 @@ gui.addColor({ color: `#${uniforms.uColorActive.value.getHexString()}` }, 'color
 gui.addColor({ color: `#${uniforms.uColorInactive.value.getHexString()}` }, 'color')
     .name('Inactive Color')
     .onChange(c => uniforms.uColorInactive.value.set(c));
+
+// Tile image hotswap via GUI
+initTileHotswap({ gui, uniforms, defaultTileName: 'Tile_300_dm.png' });
 
 //
 // Resize
