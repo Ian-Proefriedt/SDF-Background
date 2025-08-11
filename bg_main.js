@@ -75,7 +75,9 @@ scene.add(mesh);
 //
 const gui = new GUI();
 gui.add(uniforms.uTileScale, 'value', 1.0, 20.0).name('Tile Scale');
-gui.add(uniforms.uThreshold, 'value', 0.0, 1.0).name('Threshold');
+let baseThreshold = uniforms.uThreshold.value;
+const thresholdCtrl = gui.add(uniforms.uThreshold, 'value', 0.0, 1.0).name('Threshold');
+thresholdCtrl.onChange(v => { baseThreshold = v; });
 gui.add(uniforms.uSharpness, 'value', 0.001, 0.2).name('Sharpness');
 gui.add(uniforms.uNoiseScale, 'value', 0.1, 5.0).name('Noise Scale');
 gui.add(uniforms.uNoiseStrength, 'value', 0.0, 2.0).name('Noise Strength');
@@ -90,9 +92,22 @@ colorFolder.addColor({ color: `#${uniforms.uColorInactive.value.getHexString()}`
     .name('Inactive Color')
     .onChange(c => uniforms.uColorInactive.value.set(c));
 
-// Tiles folder + image hotswap
+const colorState = { maskInvert: false };
+colorFolder.add(colorState, 'maskInvert').name('Mask Invert').onChange(() => {
+    const tmp = uniforms.uColorActive.value.clone();
+    uniforms.uColorActive.value.copy(uniforms.uColorInactive.value);
+    uniforms.uColorInactive.value.copy(tmp);
+});
+
+// Tiles folder
 const tilesFolder = gui.addFolder('Tiles');
 initTileHotswap({ gui: tilesFolder, uniforms, defaultTileName: 'Tile_300_dm.png' });
+
+// Temp folder
+const tempFolder = gui.addFolder('Temp');
+const tempState = { timeSpeed: 1.0, thresholdBias: 0.0 };
+tempFolder.add(tempState, 'timeSpeed', 0.0, 5.0).name('Time Speed');
+tempFolder.add(tempState, 'thresholdBias', -0.5, 0.5).name('Threshold Bias');
 
 //
 // Resize
@@ -107,7 +122,9 @@ window.addEventListener('resize', () => {
 // Animate
 //
 function animate(t) {
-    uniforms.uTime.value = t * 0.001;
+    // Apply time speed and threshold bias per frame
+    uniforms.uTime.value = t * 0.001 * (typeof tempState?.timeSpeed === 'number' ? tempState.timeSpeed : 1.0);
+    uniforms.uThreshold.value = (typeof baseThreshold === 'number' ? baseThreshold : uniforms.uThreshold.value) + (typeof tempState?.thresholdBias === 'number' ? tempState.thresholdBias : 0.0);
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
 }
