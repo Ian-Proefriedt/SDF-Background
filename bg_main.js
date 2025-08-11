@@ -80,15 +80,19 @@ gui.add(uniforms.uSharpness, 'value', 0.001, 0.2).name('Sharpness');
 gui.add(uniforms.uNoiseScale, 'value', 0.1, 5.0).name('Noise Scale');
 gui.add(uniforms.uNoiseStrength, 'value', 0.0, 2.0).name('Noise Strength');
 gui.add(uniforms.uCurveStrength, 'value', 0.5, 5.0).name('Curve Strength'); // extended range for testing
-gui.addColor({ color: `#${uniforms.uColorActive.value.getHexString()}` }, 'color')
+
+// Colors folder
+const colorFolder = gui.addFolder('Colors');
+colorFolder.addColor({ color: `#${uniforms.uColorActive.value.getHexString()}` }, 'color')
     .name('Active Color')
     .onChange(c => uniforms.uColorActive.value.set(c));
-gui.addColor({ color: `#${uniforms.uColorInactive.value.getHexString()}` }, 'color')
+colorFolder.addColor({ color: `#${uniforms.uColorInactive.value.getHexString()}` }, 'color')
     .name('Inactive Color')
     .onChange(c => uniforms.uColorInactive.value.set(c));
 
-// Tile image hotswap via GUI
-initTileHotswap({ gui, uniforms, defaultTileName: 'Tile_300_dm.png' });
+// Tiles folder + image hotswap
+const tilesFolder = gui.addFolder('Tiles');
+initTileHotswap({ gui: tilesFolder, uniforms, defaultTileName: 'Tile_300_dm.png' });
 
 //
 // Resize

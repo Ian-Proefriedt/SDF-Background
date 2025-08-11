@@ -36,13 +36,32 @@ export function initTileHotswap({ gui, uniforms, defaultTileName }) {
 
   uniforms.tTile.value = nameToTexture[selected];
 
-  const state = { tile: selected };
+  const state = { tile: selected, nearestFilter: false };
+
+  const applyFiltering = () => {
+    const minF = state.nearestFilter ? THREE.NearestFilter : THREE.LinearFilter;
+    const magF = state.nearestFilter ? THREE.NearestFilter : THREE.LinearFilter;
+    for (const tex of Object.values(nameToTexture)) {
+      tex.minFilter = minF;
+      tex.magFilter = magF;
+      tex.needsUpdate = true;
+    }
+  };
+
+  // Ensure initial filter state is applied
+  applyFiltering();
+
   gui
     .add(state, 'tile', names)
     .name('Tile')
     .onChange((name) => {
       uniforms.tTile.value = nameToTexture[name];
     });
+
+  gui
+    .add(state, 'nearestFilter')
+    .name('Nearest Filter')
+    .onChange(() => applyFiltering());
 }
 
 
