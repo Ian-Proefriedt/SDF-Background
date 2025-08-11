@@ -1,0 +1,13 @@
+---
+description: Keep README in sync with GUI Controls
+globs: bg_main.js,bg_*.js
+alwaysApply: false
+---
+# README synchronization for GUI changes
+
+- When adding, removing, or modifying any lil-gui control in files matched by this rule, update `README.md` in the project root in the same change.
+- Follow the existing formatting, tone, grouping, and level of detail used in `README.md`. Do not invent a new style or include examples in this rule; mirror the current README.
+- Keep explanations concise and impact-focused.
+- Note key interactions with other controls when it adds clear value; omit it for broad or obvious cases (e.g., Tile Scale, Active/Inactive Color, Mask Invert).
+- Place new controls under the appropriate section/folder as organized in the README (e.g., GUI Controls, Colors, Tiles).
+- If GUI controls are introduced in new files, add those files to the `globs` list of this rule so it auto-activates when relevant edits occur.
