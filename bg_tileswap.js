@@ -6,7 +6,7 @@ import * as THREE from 'three';
 // - Adds a dropdown to swap `uniforms.tTile`
 // - defaultTileName is optional; falls back to first discovered
 export function initTileHotswap({ gui, uniforms, defaultTileName }) {
-  const modules = import.meta.glob('./Tiles/*.png', { as: 'url', eager: true });
+  const modules = import.meta.glob('./Tiles/*.png', { query: '?url', import: 'default', eager: true });
 
   const nameToUrl = {};
   for (const path in modules) {
